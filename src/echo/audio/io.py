@@ -51,6 +51,7 @@ class MicStream:
         )
         self._stream: Optional[sd.InputStream] = None
         self._running = False
+        self.device_info: str = ""
 
     # ---- 内部：音频回调 ----
     def _callback(self, indata, frames, time_info, status) -> None:
@@ -84,6 +85,14 @@ class MicStream:
             ) from e
         self._stream.start()
         self._running = True
+        try:
+            info = sd.query_devices(self._stream.device, "input")
+            self.device_info = (
+                f"{info['name']}（输入通道 {info['max_input_channels']}，"
+                f"默认采样率 {int(info['default_samplerate'])} Hz）"
+            )
+        except Exception:
+            self.device_info = "未知设备"
 
     def stop(self) -> None:
         self._running = False

@@ -32,7 +32,7 @@ def test_config_valid():
     config = SileroVADConfig(prob_threshold=0.6, required_hits=5)
     assert config.prob_threshold == 0.6
     assert config.required_hits == 5
-    assert config.db_threshold == -20.0  # 默认值
+    assert config.db_threshold == -30.0  # 默认值（2026-09-11 从 -20 放宽，兼容灵敏度较低的麦克风）
 
 
 # ═══════════════════════════════════════════════════════════════

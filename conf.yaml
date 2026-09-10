@@ -9,7 +9,7 @@ vad_config:
 
   silero:
     prob_threshold: 0.5
-    db_threshold: -20.0       # float32 音频的能量值为负数
+    db_threshold: -30.0       # 能量阈值（负值）：越低越灵敏；麦克风声音小就再调低（如 -40）
     required_hits: 3           # 连续命中 3 次确认开口（3×32ms≈0.1s）
     required_misses: 24        # 连续未命中 24 次确认说完（24×32ms≈0.77s）
     smoothing_window: 5        # 滑动窗口平滑
@@ -80,6 +80,7 @@ tts_config:
 app_config:
   sample_rate: 16000
   block_size_samples: 512
+  input_device:                     # 留空=系统默认麦克风；也可填设备编号（--mode mic 会打印）
   barge_in: true                    # 播放中检测到人声是否打断（建议戴耳机）
   min_utterance_seconds: 0.3        # 短于该时长的语音段丢弃（多半是噪声）
   max_utterance_seconds: 15.0

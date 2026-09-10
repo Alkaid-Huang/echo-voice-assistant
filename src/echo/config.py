@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 class SileroVADConfig(BaseModel):
     """Silero VAD 参数配置（带校验）"""
     prob_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
-    db_threshold: float = Field(default=-20.0, le=0)
+    db_threshold: float = Field(default=-30.0, le=0)  # 越低越灵敏（麦克风声音小就调低）
     required_hits: int = Field(default=3, gt=0)
     required_misses: int = Field(default=24, gt=0)
     smoothing_window: int = Field(default=5, gt=0)
@@ -159,6 +159,7 @@ class AppConfig(BaseModel):
     """应用层参数：音频链路 + 打断行为"""
     sample_rate: int = Field(default=16000, gt=0)
     block_size_samples: int = Field(default=512, gt=0)
+    input_device: Optional[int] = Field(default=None)  # None = 系统默认麦克风
     barge_in: bool = Field(default=True)  # 播放中检测到人声是否打断
     min_utterance_seconds: float = Field(default=0.3, ge=0.0)
     max_utterance_seconds: float = Field(default=15.0, gt=0)

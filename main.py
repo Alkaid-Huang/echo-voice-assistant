@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import yaml
 
-from echo.audio.io import load_audio_mono, play_file
+from echo.audio.io import MicStream, load_audio_mono, play_file
 from echo.config import EchoConfig
 from echo.env_loader import load_dotenv
 from echo.pipeline.conversation import ConversationPipeline
@@ -108,6 +108,53 @@ async def mode_console(config: EchoConfig) -> None:
         pipeline.stop()
 
 
+async def mode_mic(config: EchoConfig, seconds: float) -> None:
+    """
+    麦克风诊断：实时打印电平(dB)与语音概率(prob)，用于判断"收不到声音"的原因。
+
+    判断方法：
+      - 安静时 dB 应低于 -50；说话时应明显上升（高于 -35 比较理想）
+      - dB 长期低于 -60 → 麦克风没收到声音（设备选错/权限/静音开关）
+      - dB 正常但 prob 一直很低 → 环境噪声，或阈值需要调整
+    """
+    import time as _time
+
+    import numpy as np
+
+    ctx = build_context(config, ("vad",))
+    engine = ctx.vad_engine
+    silero_cfg = config.vad_config.silero
+    db_threshold = silero_cfg.db_threshold if silero_cfg else -30.0
+    prob_threshold = silero_cfg.prob_threshold if silero_cfg else 0.5
+
+    mic = MicStream(
+        config.app_config.sample_rate,
+        config.app_config.block_size_samples,
+        device=config.app_config.input_device,
+    )
+    mic.start()
+    print(f"[麦克风] {mic.device_info}")
+    print(f"诊断 {seconds:.0f} 秒：请正常说几句话，中间停顿一下")
+    print(f"判定阈值：prob >= {prob_threshold} 且 dB >= {db_threshold}")
+    try:
+        start = _time.time()
+        while _time.time() - start < seconds:
+            item = await asyncio.to_thread(mic.get, 0.5)
+            if item is None:
+                continue
+            audio, _ = item
+            rms = float(np.sqrt(np.mean(audio**2)))
+            db = 20 * np.log10(rms + 1e-7)
+            prob = engine.speech_probability(audio) if hasattr(engine, "speech_probability") else -1.0
+            flag = "  <== 判定为语音" if (prob >= prob_threshold and db >= db_threshold) else ""
+            print(f"dB={db:7.1f}  prob={prob:4.2f}{flag}", flush=True)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        mic.stop()
+    print("诊断结束。dB 长期低于 -60 说明没收到声音；说话时 dB 明显上升即可正常工作。")
+
+
 async def mode_tts(config: EchoConfig, text: str) -> None:
     ctx = build_context(config, ("tts",))
     if ctx.tts_engine is None:
@@ -131,17 +178,21 @@ def main() -> None:
     parser.add_argument(
         "--mode",
         default="check",
-        choices=["check", "text", "llm", "console", "tts", "asr"],
+        choices=["check", "text", "llm", "console", "mic", "tts", "asr"],
     )
     parser.add_argument("--config", default=str(ROOT / "conf.yaml"))
     parser.add_argument("--text", default="你好，我是 Echo，很高兴认识你。")
     parser.add_argument("--wav", default=None, help="--mode asr 时必填：音频文件路径")
+    parser.add_argument("--seconds", type=float, default=10.0, help="--mode mic 诊断时长（秒）")
+    parser.add_argument("--device", type=int, default=None, help="麦克风设备编号（覆盖配置）")
     args = parser.parse_args()
 
     # 统一以项目根目录为工作目录，避免从别处启动时找不到 conf.yaml / .env / models
     os.chdir(ROOT)
     load_dotenv(str(ROOT / ".env"))  # 已存在的环境变量优先
     config = load_config(args.config)
+    if args.device is not None:
+        config.app_config.input_device = args.device
     try:
         if args.mode == "check":
             asyncio.run(mode_check(config))
@@ -151,12 +202,17 @@ def main() -> None:
             asyncio.run(mode_llm(config, args.text))
         elif args.mode == "console":
             asyncio.run(mode_console(config))
+        elif args.mode == "mic":
+            asyncio.run(mode_mic(config, args.seconds))
         elif args.mode == "tts":
             asyncio.run(mode_tts(config, args.text))
         elif args.mode == "asr":
             if not args.wav:
                 parser.error("--mode asr 需要 --wav <音频文件路径>")
             asyncio.run(mode_asr(config, args.wav))
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        # Ctrl+C 属于正常退出，不该甩一大段 traceback
+        print("\n已退出。")
     except RuntimeError as e:
         # 配置/依赖类错误直接用可读提示，不甩 traceback
         print(f"启动失败：{e}", file=sys.stderr)

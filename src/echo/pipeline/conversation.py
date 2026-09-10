@@ -44,7 +44,7 @@ class ConversationPipeline:
         self.sample_rate = app.sample_rate
         # mic / player 可注入，方便测试时不碰真实声卡
         self.mic = mic if mic is not None else MicStream(
-            app.sample_rate, app.block_size_samples
+            app.sample_rate, app.block_size_samples, device=app.input_device
         )
         self.player = player if player is not None else play_file
         self.on_event = on_event or (lambda kind, payload=None: None)
@@ -144,6 +144,7 @@ class ConversationPipeline:
 
         self._running = True
         self.mic.start()
+        print(f"[麦克风] {getattr(self.mic, 'device_info', '未知设备')}", flush=True)
         self._emit("listening", None)
         try:
             while self._running:

@@ -72,16 +72,25 @@ class SileroVADEngine(VADInterface):
         传 numpy 数组会报 "Expected a value of type 'Tensor' ... found 'ndarray'"。
         因此这里统一转换一次；对已经是 Tensor 的输入也兼容。
         """
-        if isinstance(audio_np, np.ndarray):
-            audio_tensor = torch.from_numpy(np.ascontiguousarray(audio_np, dtype=np.float32))
-        else:
-            audio_tensor = audio_np
-        # 注意：模型第二个参数是采样率，不是帧长（真实 bug：
-        # 早期代码把 window_size_samples 传了进去，报 "Supported sampling rates: [8000, 16000]"）
-        prob = self.model(audio_tensor, self.sample_rate).item()
+        prob = self.speech_probability(audio_np)
         return self.state_machine.process(
             prob=prob, audio_np=audio_np, chunk_bytes=chunk_bytes
         )
+
+    def speech_probability(self, audio_np) -> float:
+        """
+        单帧语音概率（状态机与诊断模式共用）。
+
+        注意：模型第二个参数是采样率，不是帧长（真实 bug：
+        早期代码把 window_size_samples 传进去，报 "Supported sampling rates: [8000, 16000]"）。
+        """
+        if isinstance(audio_np, np.ndarray):
+            audio_tensor = torch.from_numpy(
+                np.ascontiguousarray(audio_np, dtype=np.float32)
+            )
+        else:
+            audio_tensor = audio_np
+        return float(self.model(audio_tensor, self.sample_rate).item())
 
     def is_speaking(self) -> bool:
         """状态机处于 ACTIVE 表示正在说话（供打断检测使用）"""
