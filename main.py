@@ -13,13 +13,15 @@ import argparse
 import asyncio
 import os
 import sys
+from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT / "src"))
 
 import yaml
 
@@ -30,7 +32,7 @@ from echo.pipeline.conversation import ConversationPipeline
 from echo.service_context import ServiceContext
 
 
-def load_config(path: str = "conf.yaml") -> EchoConfig:
+def load_config(path: str = str(ROOT / "conf.yaml")) -> EchoConfig:
     with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     return EchoConfig.model_validate(raw)
@@ -131,12 +133,14 @@ def main() -> None:
         default="check",
         choices=["check", "text", "llm", "console", "tts", "asr"],
     )
-    parser.add_argument("--config", default="conf.yaml")
+    parser.add_argument("--config", default=str(ROOT / "conf.yaml"))
     parser.add_argument("--text", default="你好，我是 Echo，很高兴认识你。")
     parser.add_argument("--wav", default=None, help="--mode asr 时必填：音频文件路径")
     args = parser.parse_args()
 
-    load_dotenv()  # 读取本地 .env（API Key 等）；已存在的环境变量优先
+    # 统一以项目根目录为工作目录，避免从别处启动时找不到 conf.yaml / .env / models
+    os.chdir(ROOT)
+    load_dotenv(str(ROOT / ".env"))  # 已存在的环境变量优先
     config = load_config(args.config)
     try:
         if args.mode == "check":

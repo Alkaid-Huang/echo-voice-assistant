@@ -7,6 +7,9 @@ Silero VAD 引擎 —— VADInterface 的具体实现
 import asyncio
 from typing import Generator
 
+import numpy as np
+import torch
+
 from .vad_interface import VADInterface
 from .vad_factory import register_vad  # 注册装饰器
 from .state_machine import State, StateMachine
@@ -26,10 +29,23 @@ class SileroVADEngine(VADInterface):
         smoothing_window: int = 5,
         pre_buffer_size: int = 20,
         window_size_samples: int = 512,
+        sample_rate: int = 16000,
     ):
+        # silero-vad 只支持 8k / 16k，且对每帧采样点数有硬性要求：
+        # 16k → 512 点，8k → 256 点。配错时模型会在推理时报晦涩错误，
+        # 所以这里在启动阶段就把配置错误暴露出来。
+        if sample_rate not in (8000, 16000):
+            raise ValueError(f"silero-vad 只支持 8000/16000 Hz，当前配置: {sample_rate}")
+        expected_window = 256 if sample_rate == 8000 else 512
+        if window_size_samples != expected_window:
+            raise ValueError(
+                f"silero-vad 在 {sample_rate} Hz 下要求每帧 {expected_window} 个采样点，"
+                f"当前配置为 {window_size_samples}"
+            )
         # 加载 silero 模型（只加载一次）
         self.model = load_silero_vad()
         self.window_size_samples = window_size_samples
+        self.sample_rate = sample_rate
 
         # 创建状态机
         self.state_machine = StateMachine(
@@ -49,8 +65,20 @@ class SileroVADEngine(VADInterface):
                 yield result
 
     def process_block(self, audio_np, chunk_bytes):
-        """处理单块：算语音概率 → 交给状态机 → 返回完整语音段或 None"""
-        prob = self.model(audio_np, self.window_size_samples).item()
+        """
+        处理单块：算语音概率 → 交给状态机 → 返回完整语音段或 None
+
+        注意（真实 bug 修复）：silero-vad 的模型要求 torch.Tensor，
+        传 numpy 数组会报 "Expected a value of type 'Tensor' ... found 'ndarray'"。
+        因此这里统一转换一次；对已经是 Tensor 的输入也兼容。
+        """
+        if isinstance(audio_np, np.ndarray):
+            audio_tensor = torch.from_numpy(np.ascontiguousarray(audio_np, dtype=np.float32))
+        else:
+            audio_tensor = audio_np
+        # 注意：模型第二个参数是采样率，不是帧长（真实 bug：
+        # 早期代码把 window_size_samples 传了进去，报 "Supported sampling rates: [8000, 16000]"）
+        prob = self.model(audio_tensor, self.sample_rate).item()
         return self.state_machine.process(
             prob=prob, audio_np=audio_np, chunk_bytes=chunk_bytes
         )

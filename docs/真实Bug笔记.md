@@ -57,3 +57,54 @@ cublas 错误、CPU 上正常返回"的模型，断言引擎最终用 CPU 出结
 "自动选设备"这类"智能默认值"最容易藏坑：它的失败点不在初始化，而在第一次
 真正计算时。处理这类问题要把异常边界放在**能用得上回退的地方**，
 而不是放在创建对象的地方。
+
+---
+
+## Bug #2：silero-vad 要求 Tensor，代码传了 numpy，VAD 一推理就崩
+
+**发现时间**：2026-09-11（首次真机语音对话）
+
+**现象**
+
+`run.bat --mode console` 启动即失败：
+
+```
+启动失败：forward() Expected a value of type 'Tensor' for argument 'x'
+but instead found type 'ndarray'. Position: 1
+```
+
+**为什么之前没暴露**
+
+- 单元测试用的是 `MockVAD`，不碰真实模型；
+- `--mode check` 只**加载**模型（构造 `SileroVADEngine`），不做一次推理；
+- 直到第一次真的对着麦克风说话，VAD 才开始逐帧调用模型。
+
+**根因（两个问题叠在一起）**
+
+1. `silero_vad` 的模型是 TorchScript 模型，入参必须是 `torch.Tensor`，
+   而 `process_block` 直接传了 numpy 数组（不同版本对 numpy 宽容度不同，所以"换个环境就崩"）；
+2. 修好类型后暴露出更深的一层：**模型第二个参数是采样率**（只接受 8000/16000），
+   而代码传的是"每帧采样点数 512"，于是报
+   `ValueError: Supported sampling rates: [8000, 16000]`。
+
+这两个错误从课程早期的 VAD 实现里就存在，因为从来没跑过一次真实推理而一直隐藏。
+
+**修复**
+
+1. `SileroVADEngine.process_block` 统一把 numpy 转成 `torch.Tensor`（float32、连续内存），
+   对已经是 Tensor 的输入保持兼容；
+2. 引擎新增 `sample_rate` 参数并校验"采样率 ↔ 帧长"必须匹配（16k→512、8k→256），
+   把配置错误提前到启动阶段，而不是等到推理时报晦涩的模型错误；
+3. 配置里新增 `vad_config.silero.sample_rate`，并写入 `conf.yaml`。
+
+**防回归**
+
+新增 `tests/test_silero_vad.py`：
+
+1. 单帧 numpy 静音调用 `process_block` 不抛异常，且不产出语音段；
+2. `detect_speech` 生成器对多帧静音跑通。
+
+**面试可讲点**
+
+"加载成功 ≠ 能推理"。凡是第三方推理库，都要有一次**真实前向调用**的测试；
+否则 mock 测试和"只构造对象"的冒烟测试都会给出虚假的安全感。

@@ -18,6 +18,7 @@ class SileroVADConfig(BaseModel):
     smoothing_window: int = Field(default=5, gt=0)
     pre_buffer_size: int = Field(default=20, gt=0)
     window_size_samples: int = Field(default=512, gt=0)
+    sample_rate: Literal[8000, 16000] = Field(default=16000)  # 与 window_size_samples 必须匹配
 
 
 class VADConfig(BaseModel):

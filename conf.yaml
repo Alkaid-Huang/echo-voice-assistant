@@ -15,6 +15,7 @@ vad_config:
     smoothing_window: 5        # 滑动窗口平滑
     pre_buffer_size: 20        # 预缓冲帧数（防切头）
     window_size_samples: 512   # silero-vad 每帧 512 采样点
+    sample_rate: 16000         # 16k 对应 512 点/帧；8k 则必须是 256 点/帧
 
 asr_config:
   # 可选: "faster_whisper"（本地 Whisper）, "sherpa_onnx"（SenseVoice）, "mock_asr", "none"

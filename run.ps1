@@ -2,6 +2,7 @@
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
 
 $root = $PSScriptRoot
+Set-Location $root
 $candidates = @(
     (Join-Path $root '.venv\Scripts\python.exe'),
     (Join-Path $root '..\Live2D-anget\.venv\Scripts\python.exe')

@@ -66,14 +66,22 @@ class MicStream:
     def start(self) -> None:
         if self._running:
             return
-        self._stream = sd.InputStream(
-            samplerate=self.sample_rate,
-            blocksize=self.block_size,
-            channels=1,
-            dtype="float32",
-            device=self.device,
-            callback=self._callback,
-        )
+        try:
+            self._stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                blocksize=self.block_size,
+                channels=1,
+                dtype="float32",
+                device=self.device,
+                callback=self._callback,
+            )
+        except Exception as e:  # PortAudio 错误信息对用户不友好，这里补上排查指引
+            raise RuntimeError(
+                f"无法打开麦克风：{e}\n"
+                f"请检查：1) 系统是否有可用输入设备；2) 麦克风权限是否开放；"
+                f"3) 是否被其他程序独占。\n"
+                f"可用设备列表：{sd.query_devices()}"
+            ) from e
         self._stream.start()
         self._running = True
 
