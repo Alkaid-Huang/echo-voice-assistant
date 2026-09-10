@@ -335,3 +335,140 @@ def test_openai_compatible_requires_api_key(monkeypatch):
     monkeypatch.delenv("ECHO_TEST_MISSING_KEY", raising=False)
     with pytest.raises(RuntimeError, match="未找到环境变量"):
         mod.OpenAICompatibleLLM(api_key_env="ECHO_TEST_MISSING_KEY")
+
+
+# ═════════════════ 并发流水线 / 双工 / 收尾保护 ═════════════════
+def test_state_machine_force_flush():
+    from echo.vad.state_machine import State, StateMachine
+
+    sm = StateMachine()
+    sm.state = State.ACTIVE
+    sm.bytes_buffer = b"hello"
+    assert sm.force_flush() == b"hello"
+    assert sm.state == State.IDLE
+    assert sm.bytes_buffer == b""
+    assert sm.force_flush() is None
+
+
+def test_mic_drops_oldest_block_and_counts():
+    from echo.audio.io import MicStream
+
+    mic = MicStream()
+    for _ in range(mic._queue.maxsize):
+        mic._queue.put_nowait((np.zeros(512, dtype=np.float32), b"old"))
+    before = mic.dropped_blocks
+
+    mic._callback(np.zeros((512, 1), dtype=np.float32), 512, None, None)
+
+    assert mic.dropped_blocks == before + 1
+    _, last_bytes = list(mic._queue.queue)[-1]
+    assert last_bytes != b"old"  # 保留了最新一块
+
+
+class _CountingMic:
+    """可注入的假麦克风：记录 start/stop 次数"""
+
+    def __init__(self, items):
+        self.items = list(items)
+        self.start_count = 0
+        self.stop_count = 0
+        self.dropped_blocks = 0
+
+    def start(self):
+        self.start_count += 1
+
+    def stop(self):
+        self.stop_count += 1
+
+    def get(self, timeout=0.5):
+        if self.items:
+            return self.items.pop(0)
+        time.sleep(0.02)
+        return None
+
+    def is_stalled(self, threshold_seconds=2.0):
+        return False
+
+
+def test_pipeline_half_duplex_pauses_capture(tmp_path):
+    """half 模式：播放期间应关闭采集（防自我对话 + 避免声卡双流争用）"""
+    config = _mock_config(tmp_path)
+    ctx = ServiceContext(config)
+    ctx.init_all()
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_player(path, stop_event=None):
+        started.set()
+        release.wait(2.0)
+
+    chunk = np.zeros(512, dtype=np.float32)
+    mic = _CountingMic([(chunk, np.zeros(16000, dtype=np.float32).tobytes())])
+    pipeline = ConversationPipeline(ctx, mic=mic, player=slow_player)
+
+    async def scenario():
+        task = asyncio.create_task(pipeline.run())
+        try:
+            for _ in range(100):
+                if started.is_set() and mic.stop_count >= 1:
+                    break
+                await asyncio.sleep(0.05)
+            paused_during_playback = mic.stop_count >= 1
+        finally:
+            release.set()
+            pipeline.stop()
+            await asyncio.wait_for(task, timeout=5)
+        return paused_during_playback
+
+    assert asyncio.run(scenario())
+
+
+def test_pipeline_forced_flush_on_max_duration(tmp_path):
+    """单句超长时应强制切分并送进应答队列（死配置 max_utterance_seconds 生效）"""
+    config = _mock_config(tmp_path)
+    config.app_config.max_utterance_seconds = 0.2
+    ctx = ServiceContext(config)
+    ctx.init_all()
+
+    segment = np.zeros(16000, dtype=np.float32).tobytes()
+
+    class _AlwaysSpeakingVAD:
+        def __init__(self):
+            self.flushed = 0
+
+        def process_block(self, audio_np, chunk_bytes):
+            return None  # 永远不自然结束
+
+        def is_speaking(self):
+            return True
+
+        def force_flush(self):
+            self.flushed += 1
+            return segment
+
+    vad = _AlwaysSpeakingVAD()
+    ctx.vad_engine = vad
+    events = []
+    mic = _CountingMic([(np.zeros(512, dtype=np.float32), b"") for _ in range(4)])
+    pipeline = ConversationPipeline(
+        ctx,
+        mic=mic,
+        player=lambda path, stop_event=None: None,
+        on_event=lambda kind, payload=None: events.append(kind),
+    )
+
+    async def scenario():
+        task = asyncio.create_task(pipeline.run())
+        try:
+            for _ in range(60):
+                if "asr" in events:
+                    break
+                await asyncio.sleep(0.05)
+        finally:
+            pipeline.stop()
+            await asyncio.wait_for(task, timeout=5)
+
+    asyncio.run(scenario())
+    assert vad.flushed >= 1
+    assert "asr" in events

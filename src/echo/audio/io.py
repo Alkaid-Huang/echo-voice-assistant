@@ -54,6 +54,7 @@ class MicStream:
         self._running = False
         self.device_info: str = ""
         self.last_block_ts: float = 0.0
+        self.dropped_blocks = 0
 
     # ---- 内部：音频回调 ----
     def _callback(self, indata, frames, time_info, status) -> None:
@@ -64,7 +65,16 @@ class MicStream:
             try:
                 self._queue.put_nowait((mono, mono.tobytes()))
             except queue.Full:
-                pass  # 消费不过来时直接丢，避免延迟无限增长
+                # 队列满：丢最旧的一块、保留最新音频，并计数以便观测
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    self._queue.put_nowait((mono, mono.tobytes()))
+                except queue.Full:
+                    pass
+                self.dropped_blocks += 1
             self.last_block_ts = time.monotonic()
         except Exception as e:
             # 回调里抛异常会让 PortAudio 停掉整条流（表现为"说着说着就聋了"）

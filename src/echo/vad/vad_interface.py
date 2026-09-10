@@ -42,3 +42,11 @@ class VADInterface(ABC):
         应停止播放。默认实现恒为 False（不支持的后端无打断能力）。
         """
         return False
+
+    def force_flush(self) -> "bytes | None":
+        """
+        强制结束当前语音段并返回已缓冲的音频（没有内容时返回 None）。
+
+        用于超长语音与音频流中断的收尾保护。默认实现返回 None。
+        """
+        return None

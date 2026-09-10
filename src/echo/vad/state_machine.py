@@ -88,6 +88,21 @@ class StateMachine:
         upper = self.db_threshold + self.db_adapt_limit
         return min(max(self.db_threshold, adaptive), upper)
 
+    def force_flush(self):
+        """
+        强制结束当前语音段，返回已累积的音频字节。
+
+        用于两类保护：单句超长（max_utterance_seconds）、
+        以及音频流中断（audio_idle_timeout）——避免状态机卡在 ACTIVE 里丢话。
+        """
+        result = self.bytes_buffer or None
+        self.state = State.IDLE
+        self.bytes_buffer = b""
+        self.hit_count = 0
+        self.miss_count = 0
+        self.pre_buffer.clear()
+        return result
+
     @staticmethod
     def calculate_db(audio_np: np.ndarray) -> float:
         """计算音频分贝（RMS 法），对照 silero.py 的 calculate_db"""

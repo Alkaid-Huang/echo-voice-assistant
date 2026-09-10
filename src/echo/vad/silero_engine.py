@@ -102,6 +102,10 @@ class SileroVADEngine(VADInterface):
         """状态机处于 ACTIVE 表示正在说话（供打断检测使用）"""
         return self.state_machine.state == State.ACTIVE
 
+    def force_flush(self):
+        """强制结束当前语音段（超长/断流保护），返回已缓冲音频"""
+        return self.state_machine.force_flush()
+
     async def async_detect_speech(self, audio_chunks):
         """异步版检测（用 asyncio.to_thread 包装，不阻塞事件循环）"""
         sync_gen = self.detect_speech(audio_chunks)

@@ -85,7 +85,12 @@ app_config:
   sample_rate: 16000
   block_size_samples: 512
   input_device:                     # 留空=系统默认麦克风；也可填设备编号（--mode mic 会打印）
-  barge_in: false                   # 播放中检测到人声是否打断；外放时会"自己打断自己"，戴耳机再开
+  # 双工模式：
+  #   half     —— 播放时暂停采集（外放安全，默认，推荐先用这个）
+  #   barge_in —— 播放时继续听，用户开口即打断（需要耳机，否则会被自己的声音打断）
+  #   full     —— 完全并发（需要回声消除 AEC，当前仅预留）
+  duplex_mode: "half"
   min_utterance_seconds: 0.5        # 短于该时长的语音段丢弃（多半是噪声）
-  max_utterance_seconds: 15.0
+  max_utterance_seconds: 15.0       # 单句最长时长：超过强制切分，避免状态机卡死
+  audio_idle_timeout: 1.0           # 说话中音频断流超过该秒数：强制收尾并重启采集
   history_file: "outputs/chat_history.json"

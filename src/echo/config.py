@@ -158,13 +158,16 @@ class TTSConfig(BaseModel):
 # 应用层
 # ═══════════════════════════════════════════════════════════
 class AppConfig(BaseModel):
-    """应用层参数：音频链路 + 打断行为"""
+    """应用层参数：音频链路 + 双工模式 + 收尾保护"""
     sample_rate: int = Field(default=16000, gt=0)
     block_size_samples: int = Field(default=512, gt=0)
     input_device: Optional[int] = Field(default=None)  # None = 系统默认麦克风
-    barge_in: bool = Field(default=True)  # 播放中检测到人声是否打断
+    # half：播放时暂停采集（外放安全）；barge_in：播放时继续听并允许插话（建议戴耳机）；
+    # full：完全并发（需要回声消除，当前仅预留）
+    duplex_mode: Literal["half", "barge_in", "full"] = Field(default="half")
     min_utterance_seconds: float = Field(default=0.3, ge=0.0)
     max_utterance_seconds: float = Field(default=15.0, gt=0)
+    audio_idle_timeout: float = Field(default=1.0, ge=0)  # 说话中音频断流多久算异常
     history_file: str = Field(default="outputs/chat_history.json")
 
 
