@@ -65,13 +65,16 @@ pip install -r requirements.txt
 按需要准备模型与模型服务：
 
 - **ASR**：faster-whisper 首次运行会自动下载模型（默认 `small`，缓存在 `models/whisper`）
-- **LLM**：安装 [Ollama](https://ollama.com) 后执行 `ollama pull qwen2.5:3b`，并把 `conf.yaml` 的 `llm_type` 改成 `"ollama"`；或用任意 OpenAI 兼容 API（`llm_type: "openai_compatible"` + 环境变量 `ECHO_LLM_API_KEY`）
+- **LLM**：默认走 OpenAI 兼容 API——把 `.env.example` 复制成 `.env` 并填入 `ECHO_LLM_API_KEY`，
+  需要换服务商时改 `conf.yaml` 里 `base_url` / `model` 两行即可（文件内附 DeepSeek / 通义 / 智谱 / 月之暗面 / 硅基流动示例）。
+  想完全本地运行则安装 [Ollama](https://ollama.com)、`ollama pull qwen2.5:3b`，再把 `llm_type` 改成 `"ollama"`。
 - **TTS**：edge-tts 需要联网
 
 运行：
 
 ```bash
 python main.py --mode check                          # 检查四个组件是否创建成功
+python main.py --mode llm --text "你好"               # 只测大模型接口（排查 API 配置最快）
 python main.py --mode text                           # 文本对话（不占麦克风，建议先跑这个）
 python main.py --mode console                        # 语音对话（建议戴耳机，避免回声误触发打断）
 python main.py --mode tts --text "你好，我是 Echo"    # 只测语音合成

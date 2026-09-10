@@ -6,3 +6,4 @@ AGENTS.md
 .venv/
 models/
 outputs/
+.env

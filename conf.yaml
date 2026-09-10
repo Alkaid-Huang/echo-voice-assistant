@@ -38,10 +38,9 @@ asr_config:
     provider: "cpu"
 
 llm_config:
-  # 可选: "ollama"（本地）, "openai_compatible"（DeepSeek/通义等）,
-  #       "mock_llm"（假实现，先跑通链路用）, "none"
-  # 装好 Ollama 后改成 "ollama"，并执行：ollama pull qwen2.5:3b
-  llm_type: "mock_llm"
+  # 可选: "openai_compatible"（在线 API，当前默认）, "ollama"（本地模型）,
+  #       "mock_llm"（假实现，只测链路）, "none"
+  llm_type: "openai_compatible"
 
   system_prompt: "你是 Echo，一个中文语音助手。回复要口语化、简短，控制在两三句话内。"
   max_history_turns: 6           # 记住最近几轮对话
@@ -54,10 +53,17 @@ llm_config:
     timeout: 60
 
   openai_compatible:
+    # 常用 OpenAI 兼容服务（换服务商只需改下面 base_url 与 model 两行）：
+    #   DeepSeek   https://api.deepseek.com/v1                        deepseek-chat
+    #   通义千问     https://dashscope.aliyuncs.com/compatible-mode/v1  qwen-plus
+    #   智谱 GLM   https://open.bigmodel.cn/api/paas/v4               glm-4-flash
+    #   月之暗面     https://api.moonshot.cn/v1                         moonshot-v1-8k
+    #   硅基流动     https://api.siliconflow.cn/v1                      Qwen/Qwen2.5-7B-Instruct
     model: "deepseek-chat"
     base_url: "https://api.deepseek.com/v1"
     api_key_env: "ECHO_LLM_API_KEY"   # 密钥从环境变量读，不写进配置文件
     temperature: 0.7
+    max_tokens: 256                   # 限制回复长度：口语场景够用，也省钱
     timeout: 60
 
 tts_config:

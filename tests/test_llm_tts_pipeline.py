@@ -251,3 +251,87 @@ def test_pipeline_run_loop_end_to_end(tmp_path):
     assert "tts" in events
     assert len(played) == 1
     assert mic.stopped
+
+
+# ═════════════════ .env 加载与 API 后端（全部不联网） ═════════════════
+class _FakeResponse:
+    """伪造 requests 响应对象"""
+
+    def __init__(self, status_code=200, payload=None, text=""):
+        self.status_code = status_code
+        self._payload = payload if payload is not None else {}
+        self.text = text
+
+    def json(self):
+        return self._payload
+
+
+def test_env_loader_reads_file_and_keeps_existing(tmp_path, monkeypatch):
+    from echo.env_loader import load_dotenv
+
+    env_file = tmp_path / ".env"
+    env_file.write_text('ECHO_TEST_KEY="from_file"\n# 注释行\nBADLINE\n', encoding="utf-8")
+
+    monkeypatch.delenv("ECHO_TEST_KEY", raising=False)
+    load_dotenv(str(env_file))
+    assert os.environ["ECHO_TEST_KEY"] == "from_file"
+
+    # 环境变量优先：已存在时不被文件覆盖
+    monkeypatch.setenv("ECHO_TEST_KEY", "from_env")
+    load_dotenv(str(env_file))
+    assert os.environ["ECHO_TEST_KEY"] == "from_env"
+
+
+def test_openai_compatible_builds_request(monkeypatch):
+    from echo.llm import openai_compatible_llm as mod
+
+    captured = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        captured.update(url=url, payload=json, headers=headers, timeout=timeout)
+        return _FakeResponse(200, {"choices": [{"message": {"content": " 你好呀 "}}]})
+
+    monkeypatch.setenv("ECHO_TEST_API_KEY", "sk-test")
+    monkeypatch.setattr(mod.requests, "post", fake_post)
+
+    llm = mod.OpenAICompatibleLLM(
+        model="test-model",
+        base_url="https://example.com/v1",
+        api_key_env="ECHO_TEST_API_KEY",
+        max_tokens=64,
+    )
+    reply = llm.chat([{"role": "user", "content": "hi"}])
+
+    assert reply == "你好呀"
+    assert captured["url"] == "https://example.com/v1/chat/completions"
+    assert captured["payload"]["model"] == "test-model"
+    assert captured["payload"]["max_tokens"] == 64
+    assert captured["payload"]["stream"] is False
+    assert captured["headers"]["Authorization"] == "Bearer sk-test"
+
+
+def test_openai_compatible_error_hints(monkeypatch):
+    from echo.llm import openai_compatible_llm as mod
+
+    monkeypatch.setenv("ECHO_TEST_API_KEY", "sk-test")
+    llm = mod.OpenAICompatibleLLM(api_key_env="ECHO_TEST_API_KEY")
+
+    monkeypatch.setattr(
+        mod.requests, "post", lambda *a, **k: _FakeResponse(401, text="unauthorized")
+    )
+    with pytest.raises(RuntimeError, match="API Key 无效"):
+        llm.chat([{"role": "user", "content": "hi"}])
+
+    monkeypatch.setattr(
+        mod.requests, "post", lambda *a, **k: _FakeResponse(404, text="not found")
+    )
+    with pytest.raises(RuntimeError, match="接口不存在"):
+        llm.chat([{"role": "user", "content": "hi"}])
+
+
+def test_openai_compatible_requires_api_key(monkeypatch):
+    from echo.llm import openai_compatible_llm as mod
+
+    monkeypatch.delenv("ECHO_TEST_MISSING_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="未找到环境变量"):
+        mod.OpenAICompatibleLLM(api_key_env="ECHO_TEST_MISSING_KEY")

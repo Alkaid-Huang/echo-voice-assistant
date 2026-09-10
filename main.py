@@ -3,6 +3,7 @@ Echo 演示入口 —— 语音对话 / 文本对话 / 单点测试
 
 用法（仓库根目录、激活 venv 后）：
     python main.py --mode check                     检查配置与组件是否创建成功
+    python main.py --mode llm --text "你好"          只测大模型接口（排查 API 配置最快）
     python main.py --mode text                      文本对话（不占麦克风，先跑通它）
     python main.py --mode console                   语音对话：mic → VAD → ASR → LLM → TTS
     python main.py --mode tts --text "你好，我是 Echo"
@@ -22,6 +23,7 @@ import yaml
 
 from echo.audio.io import load_audio_mono, play_file
 from echo.config import EchoConfig
+from echo.env_loader import load_dotenv
 from echo.pipeline.conversation import ConversationPipeline
 from echo.service_context import ServiceContext
 
@@ -60,7 +62,10 @@ async def mode_check(config: EchoConfig) -> None:
 
 
 async def mode_text(config: EchoConfig) -> None:
-    ctx = build_context(config)
+    # 文本模式只需要 LLM + TTS，不必加载 VAD/ASR 大模型
+    ctx = ServiceContext(config)
+    ctx.init_llm()
+    ctx.init_tts()
     pipeline = ConversationPipeline(ctx, on_event=make_printer())
     print("文本模式：输入内容回车；Ctrl+C 退出")
     while True:
@@ -72,6 +77,18 @@ async def mode_text(config: EchoConfig) -> None:
             continue
         reply = await pipeline.respond_text(user.strip())
         print(f"Echo: {reply}")
+
+
+async def mode_llm(config: EchoConfig, text: str) -> None:
+    """只验证 LLM 接口是否通畅（排查 API 配置问题最快的方式）"""
+    ctx = ServiceContext(config)
+    ctx.init_llm()
+    messages = [
+        {"role": "system", "content": config.llm_config.system_prompt},
+        {"role": "user", "content": text},
+    ]
+    reply = await ctx.llm_engine.async_chat(messages)
+    print(f"LLM 回复: {reply}")
 
 
 async def mode_console(config: EchoConfig) -> None:
@@ -109,18 +126,21 @@ def main() -> None:
     parser.add_argument(
         "--mode",
         default="check",
-        choices=["check", "text", "console", "tts", "asr"],
+        choices=["check", "text", "llm", "console", "tts", "asr"],
     )
     parser.add_argument("--config", default="conf.yaml")
     parser.add_argument("--text", default="你好，我是 Echo，很高兴认识你。")
     parser.add_argument("--wav", default=None, help="--mode asr 时必填：音频文件路径")
     args = parser.parse_args()
 
+    load_dotenv()  # 读取本地 .env（API Key 等）；已存在的环境变量优先
     config = load_config(args.config)
     if args.mode == "check":
         asyncio.run(mode_check(config))
     elif args.mode == "text":
         asyncio.run(mode_text(config))
+    elif args.mode == "llm":
+        asyncio.run(mode_llm(config, args.text))
     elif args.mode == "console":
         asyncio.run(mode_console(config))
     elif args.mode == "tts":

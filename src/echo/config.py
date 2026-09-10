@@ -95,6 +95,7 @@ class OpenAICompatibleLLMConfig(BaseModel):
     base_url: str = Field(default="https://api.deepseek.com/v1")
     api_key_env: str = Field(default="ECHO_LLM_API_KEY")
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=256, gt=0)
     timeout: float = Field(default=60.0, gt=0)
 
 
