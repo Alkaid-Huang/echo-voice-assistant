@@ -73,6 +73,8 @@ pip install -r requirements.txt
 运行：
 
 ```bash
+.\run.bat --mode console                             # 一键启动（自动使用项目虚拟环境）
+.\run.bat --mode llm --text "你好"                    # 只测大模型接口
 python main.py --mode check                          # 检查四个组件是否创建成功
 python main.py --mode llm --text "你好"               # 只测大模型接口（排查 API 配置最快）
 python main.py --mode text                           # 文本对话（不占麦克风，建议先跑这个）
@@ -80,6 +82,9 @@ python main.py --mode console                        # 语音对话（建议戴�
 python main.py --mode tts --text "你好，我是 Echo"    # 只测语音合成
 python main.py --mode asr --wav 你的录音.wav          # 只测语音识别（任意常见格式）
 ```
+
+> 直接 `python main.py` 要求当前解释器装好依赖；推荐用 `run.bat` / `run.ps1`，
+> 它会自动使用项目自带的 `.venv`，避免"用了系统 Python 导致 ModuleNotFoundError"。
 
 ---
 
