@@ -1,0 +1,79 @@
+# Echo 配置文件 —— 改配置即可切换模块，无需改代码
+#
+# 四个组件：VAD（听不听得到）→ ASR（听成什么字）→ LLM（怎么回复）→ TTS（怎么说话）
+# 每个组件都有 "mock" 假实现，方便先跑通链路再换真后端。
+
+vad_config:
+  # 可选: "silero_vad"（真实现）, "mock_vad"（假实现）, "none"（禁用）
+  vad_type: "silero_vad"
+
+  silero:
+    prob_threshold: 0.5
+    db_threshold: -20.0       # float32 音频的能量值为负数
+    required_hits: 3           # 连续命中 3 次确认开口（3×32ms≈0.1s）
+    required_misses: 24        # 连续未命中 24 次确认说完（24×32ms≈0.77s）
+    smoothing_window: 5        # 滑动窗口平滑
+    pre_buffer_size: 20        # 预缓冲帧数（防切头）
+    window_size_samples: 512   # silero-vad 每帧 512 采样点
+
+asr_config:
+  # 可选: "faster_whisper"（本地 Whisper）, "sherpa_onnx"（SenseVoice）, "mock_asr", "none"
+  asr_type: "faster_whisper"
+
+  faster_whisper:
+    model_path: "small"          # 模型名（small）或本地路径
+    download_root: "models/whisper"
+    language: "zh"
+    # "cpu" 最稳；"auto" 会在有 NVIDIA 显卡时选 CUDA，但需要装好 cuBLAS/cuDNN，
+    # 否则推理时才报错（程序会自动回退 CPU，见 FALLBACK_CPU）
+    device: "cpu"
+    compute_type: "int8"
+    prompt:                      # initial_prompt，留空 = 不加提示
+
+  sherpa_onnx:
+    model_path: "models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/model.int8.onnx"
+    tokens: "models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/tokens.txt"
+    num_threads: 4
+    use_itn: true
+    provider: "cpu"
+
+llm_config:
+  # 可选: "ollama"（本地）, "openai_compatible"（DeepSeek/通义等）,
+  #       "mock_llm"（假实现，先跑通链路用）, "none"
+  # 装好 Ollama 后改成 "ollama"，并执行：ollama pull qwen2.5:3b
+  llm_type: "mock_llm"
+
+  system_prompt: "你是 Echo，一个中文语音助手。回复要口语化、简短，控制在两三句话内。"
+  max_history_turns: 6           # 记住最近几轮对话
+
+  ollama:
+    model: "qwen2.5:3b"
+    host: "http://127.0.0.1:11434"
+    temperature: 0.7
+    num_predict: 256
+    timeout: 60
+
+  openai_compatible:
+    model: "deepseek-chat"
+    base_url: "https://api.deepseek.com/v1"
+    api_key_env: "ECHO_LLM_API_KEY"   # 密钥从环境变量读，不写进配置文件
+    temperature: 0.7
+    timeout: 60
+
+tts_config:
+  # 可选: "edge_tts"（在线，音质自然）, "mock_tts"（静音文件，测试用）, "none"
+  tts_type: "edge_tts"
+  output_dir: "outputs"
+
+  edge_tts:
+    voice: "zh-CN-XiaoxiaoNeural"   # 女声；男声可换 zh-CN-YunxiNeural
+    rate: "+0%"
+    volume: "+0%"
+
+app_config:
+  sample_rate: 16000
+  block_size_samples: 512
+  barge_in: true                    # 播放中检测到人声是否打断（建议戴耳机）
+  min_utterance_seconds: 0.3        # 短于该时长的语音段丢弃（多半是噪声）
+  max_utterance_seconds: 15.0
+  history_file: "outputs/chat_history.json"

@@ -1,0 +1,253 @@
+"""
+LLM / TTS / 记忆 / 对话管线测试
+
+全部使用 mock 后端，不联网、不使用声卡，可在 CI 里跑。
+"""
+import asyncio
+import os
+import sys
+import threading
+import time
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+
+import numpy as np
+import pytest
+from pydantic import ValidationError
+
+from echo.config import ASRConfig, EchoConfig, LLMConfig, TTSConfig, VADConfig
+from echo.llm.llm_factory import create_llm
+from echo.llm.mock_llm import MockLLM
+from echo.memory.chat_history import ChatHistory
+from echo.pipeline.conversation import ConversationPipeline
+from echo.service_context import ServiceContext
+from echo.tts.mock_tts import MockTTS
+from echo.tts.tts_factory import create_tts
+
+
+def _mock_config(tmp_path) -> EchoConfig:
+    config = EchoConfig(
+        vad_config=VADConfig(vad_type="mock_vad"),
+        asr_config=ASRConfig(asr_type="mock_asr"),
+        llm_config=LLMConfig(llm_type="mock_llm", max_history_turns=2),
+        tts_config=TTSConfig(tts_type="mock_tts"),
+    )
+    config.app_config.history_file = str(tmp_path / "history.json")
+    config.tts_config.output_dir = str(tmp_path / "tts")
+    return config
+
+
+def _fake_player_factory(played: list):
+    def player(path, stop_event=None):
+        played.append(path)
+    return player
+
+
+class _FakeMic:
+    """假麦克风：按顺序吐出预置音频块，取空后返回 None"""
+
+    def __init__(self, items):
+        self.items = list(items)
+        self.started = False
+        self.stopped = False
+
+    def start(self):
+        self.started = True
+
+    def stop(self):
+        self.stopped = True
+
+    def get(self, timeout=0.5):
+        if self.items:
+            return self.items.pop(0)
+        time.sleep(0.01)
+        return None
+
+
+# ═════════════════ 工厂与配置 ═════════════════
+def test_is_device_error_detects_cublas():
+    from echo.asr.faster_whisper_asr import _is_device_error
+
+    err = RuntimeError("Library cublas64_12.dll is not found or cannot be loaded")
+    assert _is_device_error(err)
+    assert not _is_device_error(ValueError("模型文件不存在"))
+
+
+def test_faster_whisper_falls_back_to_cpu(monkeypatch):
+    """真实 bug 防回归：CUDA 库缺失时，推理阶段自动回退 CPU 重试"""
+    from echo.asr import faster_whisper_asr as mod
+
+    class _FakeSegment:
+        text = " 你好 "
+
+    class _FakeModel:
+        def __init__(self, device):
+            self.device = device
+
+        def transcribe(self, audio, **kwargs):
+            if self.device != "cpu":
+                raise RuntimeError(
+                    "Library cublas64_12.dll is not found or cannot be loaded"
+                )
+            return [_FakeSegment()], None
+
+    loaded_devices = []
+
+    def fake_loader(model_path, download_root, device, compute_type):
+        loaded_devices.append(device)
+        return _FakeModel(device)
+
+    monkeypatch.setattr(mod, "_load_whisper_model", fake_loader)
+    engine = mod.FasterWhisperASR(model_path="small", device="auto")
+    text = engine.transcribe_np(np.zeros(16000, dtype=np.float32))
+
+    assert text == "你好"
+    assert engine.device == "cpu"
+    assert loaded_devices == ["auto", "cpu"]
+
+
+def test_create_mock_llm():
+    engine = create_llm("mock_llm")
+    assert isinstance(engine, MockLLM)
+    assert engine.chat([{"role": "user", "content": "hi"}])
+
+
+def test_create_unknown_llm_raises():
+    with pytest.raises(ValueError, match="未知 LLM 类型"):
+        create_llm("not_a_llm")
+
+
+def test_create_mock_tts():
+    engine = create_tts("mock_tts")
+    assert isinstance(engine, MockTTS)
+
+
+def test_llm_config_rejects_unknown_type():
+    with pytest.raises(ValidationError):
+        LLMConfig(llm_type="chatgpt")
+
+
+def test_tts_params_carry_output_dir(tmp_path):
+    config = TTSConfig(tts_type="mock_tts", output_dir=str(tmp_path))
+    assert config.get_tts_params()["output_dir"] == str(tmp_path)
+
+
+# ═════════════════ TTS 与记忆 ═════════════════
+def test_mock_tts_writes_wav(tmp_path):
+    path = MockTTS(output_dir=str(tmp_path)).synthesize("你好呀")
+    assert os.path.exists(path)
+    assert os.path.getsize(path) > 44  # 大于 WAV 头
+
+
+def test_chat_history_roundtrip(tmp_path):
+    path = str(tmp_path / "h.json")
+    history = ChatHistory(path=path, max_messages=4)
+    history.append("user", "你好")
+    history.append("assistant", "你好呀")
+    history.save()
+
+    reloaded = ChatHistory(path=path, max_messages=4)
+    assert reloaded.messages()[0]["content"] == "你好"
+    assert len(reloaded) == 2
+
+
+def test_chat_history_trims_old_messages(tmp_path):
+    history = ChatHistory(path=None, max_messages=2)
+    history.append("user", "1")
+    history.append("assistant", "2")
+    history.append("user", "3")
+    assert len(history) == 2
+    assert history.messages()[0]["content"] == "2"
+
+
+# ═════════════════ 容器 ═════════════════
+def test_service_context_init_all(tmp_path):
+    ctx = ServiceContext(_mock_config(tmp_path))
+    ctx.init_all()
+    assert type(ctx.vad_engine).__name__ == "MockVAD"
+    assert type(ctx.asr_engine).__name__ == "MockASR"
+    assert type(ctx.llm_engine).__name__ == "MockLLM"
+    assert type(ctx.tts_engine).__name__ == "MockTTS"
+
+
+# ═════════════════ 管线 ═════════════════
+def test_pipeline_text_reply(tmp_path):
+    ctx = ServiceContext(_mock_config(tmp_path))
+    ctx.init_all()
+    played = []
+    pipeline = ConversationPipeline(ctx, player=_fake_player_factory(played))
+
+    reply = asyncio.run(pipeline.respond_text("你好"))
+    assert reply == "（模拟回复）我在听，你继续说。"
+    assert len(played) == 1  # TTS 产出后触发了播放
+    assert len(pipeline.history) == 2  # 用户 + 助手各一条
+
+
+def test_pipeline_handles_segment(tmp_path):
+    ctx = ServiceContext(_mock_config(tmp_path))
+    ctx.init_all()
+    pipeline = ConversationPipeline(ctx, player=_fake_player_factory([]))
+
+    audio = np.zeros(16000, dtype=np.float32)  # 1 秒，超过最短时长
+    reply = asyncio.run(pipeline.handle_segment(audio.tobytes()))
+    assert reply == "（模拟回复）我在听，你继续说。"
+
+
+def test_pipeline_drops_too_short_segment(tmp_path):
+    ctx = ServiceContext(_mock_config(tmp_path))
+    ctx.init_all()
+    pipeline = ConversationPipeline(ctx, player=_fake_player_factory([]))
+
+    audio = np.zeros(1600, dtype=np.float32)  # 0.1 秒 < 0.3 秒阈值
+    assert asyncio.run(pipeline.handle_segment(audio.tobytes())) is None
+
+
+def test_pipeline_interrupt_stops_playback(tmp_path):
+    ctx = ServiceContext(_mock_config(tmp_path))
+    ctx.init_all()
+    stopped = threading.Event()
+
+    def slow_player(path, stop_event=None):
+        # 播放 2 秒，除非被打断
+        if stop_event is not None and stop_event.wait(2.0):
+            stopped.set()
+
+    pipeline = ConversationPipeline(ctx, player=slow_player)
+    asyncio.run(pipeline.respond_text("说一句长一点的话"))
+    assert pipeline._is_playing()
+    pipeline.interrupt()
+    assert stopped.wait(1.0), "打断后播放线程应及时退出"
+    assert not pipeline._is_playing()
+
+
+def test_pipeline_run_loop_end_to_end(tmp_path):
+    """假麦克风喂一块音频 → VAD 出段 → ASR → LLM → TTS → 播放"""
+    ctx = ServiceContext(_mock_config(tmp_path))
+    ctx.init_all()
+    events = []
+    played = []
+    chunk = np.zeros(512, dtype=np.float32)
+    mic = _FakeMic([(chunk, np.zeros(16000, dtype=np.float32).tobytes())])
+    pipeline = ConversationPipeline(
+        ctx,
+        mic=mic,
+        player=_fake_player_factory(played),
+        on_event=lambda kind, payload=None: events.append(kind),
+    )
+
+    async def scenario():
+        task = asyncio.create_task(pipeline.run())
+        for _ in range(100):
+            if "llm" in events:
+                break
+            await asyncio.sleep(0.05)
+        pipeline.stop()
+        await asyncio.wait_for(task, timeout=5)
+
+    asyncio.run(scenario())
+    assert "listening" in events
+    assert "asr" in events
+    assert "llm" in events
+    assert "tts" in events
+    assert len(played) == 1
+    assert mic.stopped

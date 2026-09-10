@@ -1,0 +1,8 @@
+__pycache__/
+.pytest_cache/
+.uploads/
+AGENTS.md
+我和ai对话历史.txt
+.venv/
+models/
+outputs/

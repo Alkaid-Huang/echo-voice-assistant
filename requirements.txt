@@ -1,0 +1,32 @@
+# Echo 运行依赖（Python 3.11+，Windows / macOS / Linux）
+
+# 配置与基础
+pydantic>=2.0
+PyYAML
+numpy
+requests
+
+# VAD
+torch
+silero-vad
+
+# ASR（本地语音识别）
+faster-whisper
+onnxruntime
+
+# 音频输入输出
+sounddevice
+soundfile
+
+# TTS（在线合成）
+edge-tts
+
+# Web 端（后续网页对话用）
+fastapi
+uvicorn
+
+# 测试
+pytest
+
+# 可选：sherpa-onnx（SenseVoice 后端，中文更快）
+# sherpa-onnx
