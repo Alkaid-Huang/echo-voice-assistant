@@ -27,5 +27,29 @@
 
 ## 待补充
 
-- 端到端（说话结束 → 听到回复）总延迟分解：VAD 收尾 + ASR + LLM + TTS + 播放启动
-- LLM 首 token / 整句耗时（Ollama qwen2.5:3b，CPU 与 GPU 对比）
+## 2026-09-11 · LLM（DeepSeek API）+ TTS 真实延迟
+
+**环境**：Windows / Python 3.14 / DeepSeek `deepseek-chat`（OpenAI 兼容 API）/ edge-tts
+**输入**：`用一句话介绍你自己，要口语化`
+**脚本**：`python benchmarks/benchmark_once.py --text "..." --repeat 3`（可复现）
+
+| 指标 | 数值 |
+|------|------|
+| LLM 冷启动（含建连） | 859 ms |
+| LLM 热启动第 1 次 | 913 ms |
+| LLM 热启动第 2 次 | 588 ms |
+| TTS 合成（约 25 字回复） | 2724 ms |
+| TTS 产出 | `outputs/tts_*.mp3`，31,824 字节 |
+
+**结论**：
+
+1. LLM 整句生成约 0.6–0.9s，比预期快；
+2. **TTS 合成 2.7s 是当前最大单项开销**，优化优先级应调整为「TTS 分句流式 > LLM 流式」；
+3. 端到端预算（VAD 收尾约 0.8s + ASR 约 1.5s + LLM 约 0.7s + TTS 约 2.7s）已超过 2s 目标，
+   必须靠流式（先出声、边合成边播）才能达标。
+
+## 待补充
+
+- 端到端（说话结束 → 听到回复）总延迟的实测分解：VAD 收尾 + ASR + LLM + TTS + 播放启动
+- 打断响应（用户开口 → 播放停止）实测值
+- 内存占用基线

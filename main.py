@@ -36,9 +36,13 @@ def load_config(path: str = "conf.yaml") -> EchoConfig:
     return EchoConfig.model_validate(raw)
 
 
-def build_context(config: EchoConfig) -> ServiceContext:
+def build_context(
+    config: EchoConfig, components: tuple = ("vad", "asr", "llm", "tts")
+) -> ServiceContext:
+    """按需初始化组件，避免不必要的模型加载（--mode tts 不该加载 ASR）"""
     ctx = ServiceContext(config)
-    ctx.init_all()
+    for name in components:
+        getattr(ctx, f"init_{name}")()
     return ctx
 
 
@@ -65,9 +69,7 @@ async def mode_check(config: EchoConfig) -> None:
 
 async def mode_text(config: EchoConfig) -> None:
     # 文本模式只需要 LLM + TTS，不必加载 VAD/ASR 大模型
-    ctx = ServiceContext(config)
-    ctx.init_llm()
-    ctx.init_tts()
+    ctx = build_context(config, ("llm", "tts"))
     pipeline = ConversationPipeline(ctx, on_event=make_printer())
     print("文本模式：输入内容回车；Ctrl+C 退出")
     while True:
@@ -83,8 +85,7 @@ async def mode_text(config: EchoConfig) -> None:
 
 async def mode_llm(config: EchoConfig, text: str) -> None:
     """只验证 LLM 接口是否通畅（排查 API 配置问题最快的方式）"""
-    ctx = ServiceContext(config)
-    ctx.init_llm()
+    ctx = build_context(config, ("llm",))
     messages = [
         {"role": "system", "content": config.llm_config.system_prompt},
         {"role": "user", "content": text},
@@ -106,7 +107,7 @@ async def mode_console(config: EchoConfig) -> None:
 
 
 async def mode_tts(config: EchoConfig, text: str) -> None:
-    ctx = build_context(config)
+    ctx = build_context(config, ("tts",))
     if ctx.tts_engine is None:
         raise RuntimeError("TTS 未启用")
     path = await ctx.tts_engine.async_synthesize(text)
@@ -115,7 +116,7 @@ async def mode_tts(config: EchoConfig, text: str) -> None:
 
 
 async def mode_asr(config: EchoConfig, wav: str) -> None:
-    ctx = build_context(config)
+    ctx = build_context(config, ("asr",))
     if ctx.asr_engine is None:
         raise RuntimeError("ASR 未启用")
     audio = load_audio_mono(wav)

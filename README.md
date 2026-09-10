@@ -105,10 +105,13 @@ python main.py --mode asr --wav 你的录音.wav          # 只测语音识别�
 | 指标 | 数值 | 来源 |
 |------|------|------|
 | 5 秒音频转写（CPU） | 约 1.5 s | `benchmarks/results.md` |
+| LLM 整句生成（DeepSeek API） | 0.6 ~ 0.9 s | 同上 |
+| TTS 合成（约 25 字回复） | 约 2.7 s | 同上 |
 | 模型首次加载 | 约 1.9 s | 同上 |
-| edge-tts 合成一句话 | 约 1–2 s（含网络） | 实测 |
 
-测试：**36 个用例全部通过**（含 VAD/ASR 回归、LLM/TTS 工厂、记忆、管线端到端与降级防回归），
+测量脚本：`python benchmarks/benchmark_once.py --text "..." --repeat 3`
+
+测试：**40 个用例全部通过**（含 VAD/ASR 回归、LLM/TTS 工厂、`.env` 加载、API 请求构造与错误提示、记忆、管线端到端与降级防回归），
 运行方式：`python -m pytest tests -q`，全程使用 mock 后端，不需要模型和声卡。
 
 ---
