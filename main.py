@@ -16,6 +16,8 @@ import sys
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
@@ -135,20 +137,25 @@ def main() -> None:
 
     load_dotenv()  # 读取本地 .env（API Key 等）；已存在的环境变量优先
     config = load_config(args.config)
-    if args.mode == "check":
-        asyncio.run(mode_check(config))
-    elif args.mode == "text":
-        asyncio.run(mode_text(config))
-    elif args.mode == "llm":
-        asyncio.run(mode_llm(config, args.text))
-    elif args.mode == "console":
-        asyncio.run(mode_console(config))
-    elif args.mode == "tts":
-        asyncio.run(mode_tts(config, args.text))
-    elif args.mode == "asr":
-        if not args.wav:
-            parser.error("--mode asr 需要 --wav <音频文件路径>")
-        asyncio.run(mode_asr(config, args.wav))
+    try:
+        if args.mode == "check":
+            asyncio.run(mode_check(config))
+        elif args.mode == "text":
+            asyncio.run(mode_text(config))
+        elif args.mode == "llm":
+            asyncio.run(mode_llm(config, args.text))
+        elif args.mode == "console":
+            asyncio.run(mode_console(config))
+        elif args.mode == "tts":
+            asyncio.run(mode_tts(config, args.text))
+        elif args.mode == "asr":
+            if not args.wav:
+                parser.error("--mode asr 需要 --wav <音频文件路径>")
+            asyncio.run(mode_asr(config, args.wav))
+    except RuntimeError as e:
+        # 配置/依赖类错误直接用可读提示，不甩 traceback
+        print(f"启动失败：{e}", file=sys.stderr)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
