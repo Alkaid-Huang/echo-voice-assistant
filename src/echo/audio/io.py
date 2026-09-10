@@ -7,6 +7,7 @@
 import os
 import queue
 import threading
+import time
 from typing import Iterator, Optional, Tuple
 
 import numpy as np
@@ -52,16 +53,22 @@ class MicStream:
         self._stream: Optional[sd.InputStream] = None
         self._running = False
         self.device_info: str = ""
+        self.last_block_ts: float = 0.0
 
     # ---- 内部：音频回调 ----
     def _callback(self, indata, frames, time_info, status) -> None:
-        if status:
-            print(f"[MicStream] {status}", flush=True)
-        mono = np.asarray(indata[:, 0], dtype=np.float32).copy()
         try:
-            self._queue.put_nowait((mono, mono.tobytes()))
-        except queue.Full:
-            pass  # 消费不过来时直接丢，避免延迟无限增长
+            if status:
+                print(f"[MicStream] {status}", flush=True)
+            mono = np.asarray(indata[:, 0], dtype=np.float32).copy()
+            try:
+                self._queue.put_nowait((mono, mono.tobytes()))
+            except queue.Full:
+                pass  # 消费不过来时直接丢，避免延迟无限增长
+            self.last_block_ts = time.monotonic()
+        except Exception as e:
+            # 回调里抛异常会让 PortAudio 停掉整条流（表现为"说着说着就聋了"）
+            print(f"[MicStream] 回调异常（已忽略）: {e}", flush=True)
 
     # ---- 生命周期 ----
     def start(self) -> None:
@@ -100,6 +107,12 @@ class MicStream:
             self._stream.stop()
             self._stream.close()
             self._stream = None
+
+    def is_stalled(self, threshold_seconds: float = 2.0) -> bool:
+        """是否超过 threshold_seconds 没收到音频块（用于看门狗重启采集）"""
+        if not self._running or self.last_block_ts == 0.0:
+            return False
+        return (time.monotonic() - self.last_block_ts) > threshold_seconds
 
     def get(self, timeout: float = 0.5) -> Optional[Tuple[np.ndarray, bytes]]:
         """取一个音频块；超时返回 None（保持链路可中断）"""

@@ -150,6 +150,15 @@ class ConversationPipeline:
             while self._running:
                 item = await asyncio.to_thread(self.mic.get, 0.5)
                 if item is None:
+                    # 看门狗：长时间收不到音频块说明采集流挂了，重启它
+                    if hasattr(self.mic, "is_stalled") and self.mic.is_stalled(2.0):
+                        print("[麦克风] 超过 2 秒没有数据，正在重启采集…", flush=True)
+                        try:
+                            self.mic.stop()
+                            self.mic.start()
+                            self._emit("error", "麦克风采集已重启")
+                        except Exception as e:
+                            self._emit("error", f"麦克风重启失败: {e}")
                     continue
                 audio_np, chunk_bytes = item
                 segment = self.vad.process_block(audio_np, chunk_bytes)

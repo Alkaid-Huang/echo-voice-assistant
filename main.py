@@ -136,6 +136,7 @@ async def mode_mic(config: EchoConfig, seconds: float) -> None:
     print(f"[麦克风] {mic.device_info}")
     print(f"诊断 {seconds:.0f} 秒：请正常说几句话，中间停顿一下")
     print(f"判定阈值：prob >= {prob_threshold} 且 dB >= {db_threshold}")
+    state_machine = getattr(engine, "state_machine", None)
     try:
         start = _time.time()
         while _time.time() - start < seconds:
@@ -146,13 +147,72 @@ async def mode_mic(config: EchoConfig, seconds: float) -> None:
             rms = float(np.sqrt(np.mean(audio**2)))
             db = 20 * np.log10(rms + 1e-7)
             prob = engine.speech_probability(audio) if hasattr(engine, "speech_probability") else -1.0
-            flag = "  <== 判定为语音" if (prob >= prob_threshold and db >= db_threshold) else ""
-            print(f"dB={db:7.1f}  prob={prob:4.2f}{flag}", flush=True)
+            # 把这一帧喂给状态机，让底噪估计和自适应阈值真正生效
+            segment = engine.process_block(audio, audio.tobytes())
+            flag = "  <== 判定为语音" if segment is not None else ""
+            if state_machine is not None:
+                floor = state_machine.noise_floor_db
+                thr = state_machine.effective_db_threshold()
+                floor_text = "--" if floor is None else f"{floor:6.1f}"
+                print(
+                    f"dB={db:7.1f}  prob={prob:4.2f}  底噪={floor_text}  生效阈值={thr:6.1f}{flag}",
+                    flush=True,
+                )
+            else:
+                print(f"dB={db:7.1f}  prob={prob:4.2f}{flag}", flush=True)
     except KeyboardInterrupt:
         pass
     finally:
         mic.stop()
     print("诊断结束。dB 长期低于 -60 说明没收到声音；说话时 dB 明显上升即可正常工作。")
+
+
+async def mode_record(config: EchoConfig, seconds: float, out_path: str | None) -> None:
+    """
+    录音模式：把麦克风采集写成 16k 单声道 WAV。
+
+    用途：判断"识别不准"到底是麦克风录音质量问题，还是 VAD 切分问题——
+    录完再用 --mode asr 跑同一个文件，就能分离这两个变量。
+    """
+    import time as _time
+    import wave
+
+    import numpy as np
+
+    mic = MicStream(
+        config.app_config.sample_rate,
+        config.app_config.block_size_samples,
+        device=config.app_config.input_device,
+    )
+    mic.start()
+    print(f"[麦克风] {mic.device_info}")
+    print(f"录音 {seconds:.0f} 秒：请对着麦克风重复说几遍「喂你好」")
+    frames = []
+    try:
+        start = _time.time()
+        while _time.time() - start < seconds:
+            item = await asyncio.to_thread(mic.get, 0.5)
+            if item is not None:
+                frames.append(item[0])
+    finally:
+        mic.stop()
+
+    audio = np.concatenate(frames) if frames else np.zeros(0, dtype=np.float32)
+    out = out_path or os.path.join("outputs", f"record_{int(_time.time())}.wav")
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+    pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
+    with wave.open(out, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(config.app_config.sample_rate)
+        wf.writeframes(pcm.tobytes())
+
+    seconds_actual = len(audio) / config.app_config.sample_rate if len(audio) else 0
+    peak_db = (
+        20 * np.log10(float(np.max(np.abs(audio))) + 1e-7) if len(audio) else -999.0
+    )
+    print(f"已保存: {out}（{seconds_actual:.1f} 秒，峰值 {peak_db:.1f} dB）")
+    print(f"下一步用它验识别：python main.py --mode asr --wav {out}")
 
 
 async def mode_tts(config: EchoConfig, text: str) -> None:
@@ -178,13 +238,14 @@ def main() -> None:
     parser.add_argument(
         "--mode",
         default="check",
-        choices=["check", "text", "llm", "console", "mic", "tts", "asr"],
+        choices=["check", "text", "llm", "console", "mic", "record", "tts", "asr"],
     )
     parser.add_argument("--config", default=str(ROOT / "conf.yaml"))
     parser.add_argument("--text", default="你好，我是 Echo，很高兴认识你。")
     parser.add_argument("--wav", default=None, help="--mode asr 时必填：音频文件路径")
     parser.add_argument("--seconds", type=float, default=10.0, help="--mode mic 诊断时长（秒）")
     parser.add_argument("--device", type=int, default=None, help="麦克风设备编号（覆盖配置）")
+    parser.add_argument("--out", default=None, help="--mode record 的输出文件路径")
     args = parser.parse_args()
 
     # 统一以项目根目录为工作目录，避免从别处启动时找不到 conf.yaml / .env / models
@@ -204,6 +265,8 @@ def main() -> None:
             asyncio.run(mode_console(config))
         elif args.mode == "mic":
             asyncio.run(mode_mic(config, args.seconds))
+        elif args.mode == "record":
+            asyncio.run(mode_record(config, args.seconds, args.out))
         elif args.mode == "tts":
             asyncio.run(mode_tts(config, args.text))
         elif args.mode == "asr":

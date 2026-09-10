@@ -19,6 +19,8 @@ class SileroVADConfig(BaseModel):
     pre_buffer_size: int = Field(default=20, gt=0)
     window_size_samples: int = Field(default=512, gt=0)
     sample_rate: Literal[8000, 16000] = Field(default=16000)  # 与 window_size_samples 必须匹配
+    db_margin: float = Field(default=6.0, ge=0)  # 说话至少要比环境底噪高多少 dB
+    db_adapt_limit: float = Field(default=10.0, ge=0)  # 自适应最多抬高多少 dB
 
 
 class VADConfig(BaseModel):

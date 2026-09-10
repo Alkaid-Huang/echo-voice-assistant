@@ -29,6 +29,9 @@ class StateMachine:
         required_misses: int = 24,        # 连续未命中几次确认"说完了"
         smoothing_window: int = 5,        # 滑动窗口大小（平滑概率和分贝）
         pre_buffer_size: int = 20,       # 预缓冲帧数（防切头）
+        db_margin: float = 6.0,          # 说话时至少要比环境底噪高多少 dB
+        noise_floor_alpha: float = 0.02,  # 底噪估计的滑动速度（越小越慢）
+        db_adapt_limit: float = 10.0,     # 自适应最多把阈值抬高多少 dB（防止噪声大时听不见人声）
     ):
         self.state = State.IDLE
 
@@ -37,6 +40,9 @@ class StateMachine:
         self.db_threshold = db_threshold
         self.required_hits = required_hits
         self.required_misses = required_misses
+        self.db_margin = db_margin
+        self.noise_floor_alpha = noise_floor_alpha
+        self.db_adapt_limit = db_adapt_limit
 
         # 滑动窗口（deque 满了自动挤掉最老的）
         self.probs = deque(maxlen=smoothing_window)
@@ -52,6 +58,36 @@ class StateMachine:
         self.hit_count = 0    # 连续命中次数
         self.miss_count = 0   # 连续未命中次数
 
+        # 环境底噪估计（用于自适应阈值：风扇/空调这类稳态噪声不该被当成说话）
+        self.noise_floor_db = None
+        self._startup_dbs = []
+
+    def _update_noise_floor(self, db: float, prob_is_speech: bool) -> None:
+        """只用"明确不是语音"的帧更新底噪，避免把说话声当成噪声"""
+        if prob_is_speech:
+            return
+        if self.noise_floor_db is None:
+            self._startup_dbs.append(db)
+            if len(self._startup_dbs) >= 20:
+                # 取前 20 帧里较低的 20% 分位作为初始底噪，避免开机瞬间就在说话
+                self.noise_floor_db = float(np.percentile(self._startup_dbs, 20))
+            return
+        a = self.noise_floor_alpha
+        self.noise_floor_db = (1 - a) * self.noise_floor_db + a * db
+
+    def effective_db_threshold(self) -> float:
+        """
+        实际生效的能量阈值。
+
+        规则：不低于配置值，但最多只比配置值高 db_adapt_limit dB。
+        这样既能躲开稳态噪声，又不会在嘈杂环境里把门槛抬到听不见人声。
+        """
+        if self.noise_floor_db is None:
+            return self.db_threshold
+        adaptive = self.noise_floor_db + self.db_margin
+        upper = self.db_threshold + self.db_adapt_limit
+        return min(max(self.db_threshold, adaptive), upper)
+
     @staticmethod
     def calculate_db(audio_np: np.ndarray) -> float:
         """计算音频分贝（RMS 法），对照 silero.py 的 calculate_db"""
@@ -64,7 +100,11 @@ class StateMachine:
         self.dbs.append(db)
         smoothed_prob = sum(self.probs) / len(self.probs)
         smoothed_db = sum(self.dbs) / len(self.dbs)
-        return smoothed_prob >= self.prob_threshold and smoothed_db >= self.db_threshold
+        self._update_noise_floor(db, prob >= self.prob_threshold)
+        return (
+            smoothed_prob >= self.prob_threshold
+            and smoothed_db >= self.effective_db_threshold()
+        )
 
     def process(self, prob: float, audio_np: np.ndarray, chunk_bytes: bytes):
         """

@@ -30,6 +30,9 @@ class SileroVADEngine(VADInterface):
         pre_buffer_size: int = 20,
         window_size_samples: int = 512,
         sample_rate: int = 16000,
+        db_margin: float = 6.0,
+        noise_floor_alpha: float = 0.02,
+        db_adapt_limit: float = 10.0,
     ):
         # silero-vad 只支持 8k / 16k，且对每帧采样点数有硬性要求：
         # 16k → 512 点，8k → 256 点。配错时模型会在推理时报晦涩错误，
@@ -55,6 +58,9 @@ class SileroVADEngine(VADInterface):
             required_misses=required_misses,
             smoothing_window=smoothing_window,
             pre_buffer_size=pre_buffer_size,
+            db_margin=db_margin,
+            noise_floor_alpha=noise_floor_alpha,
+            db_adapt_limit=db_adapt_limit,
         )
 
     def detect_speech(self, audio_chunks) -> Generator[bytes, None, None]:
