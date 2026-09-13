@@ -25,8 +25,6 @@
 
 **结论**：合成耗时约 1–2 秒（含网络往返），可作为端到端预算中的固定项。
 
-## 待补充
-
 ## 2026-09-11 · LLM（DeepSeek API）+ TTS 真实延迟
 
 **环境**：Windows / Python 3.14 / DeepSeek `deepseek-chat`（OpenAI 兼容 API）/ edge-tts
