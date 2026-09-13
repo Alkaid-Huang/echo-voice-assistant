@@ -215,6 +215,19 @@ async def mode_record(config: EchoConfig, seconds: float, out_path: str | None) 
     print(f"下一步用它验识别：python main.py --mode asr --wav {out}")
 
 
+async def mode_agent(config: EchoConfig, text: str) -> None:
+    """只验证 Agent 大脑：工具调用 + 情绪输出（不占麦克风、不播放）"""
+    ctx = build_context(config, ("llm",))
+    pipeline = ConversationPipeline(
+        ctx,
+        player=lambda path, stop_event=None: None,  # 不真的播放
+        on_event=make_printer(),
+    )
+    reply = await pipeline.respond_text(text)
+    print(f"\n回复: {reply}")
+    print(f"情绪: {pipeline.last_emotion}")
+
+
 async def mode_tts(config: EchoConfig, text: str) -> None:
     ctx = build_context(config, ("tts",))
     if ctx.tts_engine is None:
@@ -238,7 +251,17 @@ def main() -> None:
     parser.add_argument(
         "--mode",
         default="check",
-        choices=["check", "text", "llm", "console", "mic", "record", "tts", "asr"],
+        choices=[
+            "check",
+            "text",
+            "llm",
+            "agent",
+            "console",
+            "mic",
+            "record",
+            "tts",
+            "asr",
+        ],
     )
     parser.add_argument("--config", default=str(ROOT / "conf.yaml"))
     parser.add_argument("--text", default="你好，我是 Echo，很高兴认识你。")
@@ -261,6 +284,8 @@ def main() -> None:
             asyncio.run(mode_text(config))
         elif args.mode == "llm":
             asyncio.run(mode_llm(config, args.text))
+        elif args.mode == "agent":
+            asyncio.run(mode_agent(config, args.text))
         elif args.mode == "console":
             asyncio.run(mode_console(config))
         elif args.mode == "mic":

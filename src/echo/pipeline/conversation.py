@@ -27,8 +27,11 @@ from typing import Callable, Optional
 
 import numpy as np
 
+from ..agent.agent import Agent
+from ..agent.tools import build_default_tools
 from ..audio.io import MicStream, play_file
 from ..memory.chat_history import ChatHistory
+from ..memory.facts import FactStore
 from ..service_context import ServiceContext
 
 
@@ -62,6 +65,23 @@ class ConversationPipeline:
             path=app.history_file,
             max_messages=self.config.llm_config.max_history_turns * 2,
         )
+
+        # Agent 大脑：工具调用 + 长期记忆 + 情绪输出（Live2D 靠 emotion 事件驱动表情）
+        self.agent: Optional[Agent] = None
+        self.last_emotion: str = "neutral"
+        agent_config = self.config.agent_config
+        if agent_config.enabled and self.llm is not None:
+            self.facts = FactStore(path=agent_config.facts_file)
+            self.agent = Agent(
+                llm=self.llm,
+                tools=build_default_tools(facts=self.facts, enabled=list(agent_config.tools)),
+                history=self.history,
+                facts=self.facts,
+                persona=agent_config.persona,
+                max_iterations=agent_config.max_iterations,
+                enabled_tools=list(agent_config.tools),
+                on_event=self._emit,
+            )
         self._stop_event = threading.Event()
         self._play_thread: Optional[threading.Thread] = None
         self._running = False
@@ -121,13 +141,30 @@ class ConversationPipeline:
         if self.llm is None:
             raise RuntimeError("LLM 未初始化，请先调用 ServiceContext.init_all()")
         t0 = time.perf_counter()
-        reply = await self.llm.async_chat(self.build_messages(user_text))
-        self._emit("llm", {"text": reply, "ms": round((time.perf_counter() - t0) * 1000)})
-
-        self.history.append("user", user_text)
-        self.history.append("assistant", reply)
-        self.history.save()
-        self.last_reply = reply
+        if self.agent is not None:
+            # Agent 路径：可能调用工具，并返回情绪（供 Live2D 使用）
+            agent_reply = await self.agent.respond(user_text)
+            reply = agent_reply.text
+            self.last_emotion = agent_reply.emotion
+            self.last_reply = reply
+            self._emit(
+                "llm",
+                {
+                    "text": reply,
+                    "ms": round((time.perf_counter() - t0) * 1000),
+                    "emotion": agent_reply.emotion,
+                    "tools": len(agent_reply.tool_calls),
+                },
+            )
+        else:
+            reply = await self.llm.async_chat(self.build_messages(user_text))
+            self._emit(
+                "llm", {"text": reply, "ms": round((time.perf_counter() - t0) * 1000)}
+            )
+            self.history.append("user", user_text)
+            self.history.append("assistant", reply)
+            self.history.save()
+            self.last_reply = reply
 
         if self.tts is not None:
             t1 = time.perf_counter()

@@ -81,6 +81,17 @@ tts_config:
     rate: "+0%"
     volume: "+0%"
 
+agent_config:
+  enabled: true                       # Agent 大脑：工具调用 + 记忆 + 情绪输出
+  max_iterations: 3                   # 工具调用循环上限（防止模型反复调工具）
+  persona: "你是 Echo，一个住在桌面上的 AI 伴侣；说话口语化、简短、有温度。"
+  tools:                              # 启用的工具（对应 src/echo/agent/tools.py）
+    - get_current_time                # 查当前时间
+    - get_weather                     # 查天气（Open-Meteo，免 API Key）
+    - remember                        # 记住关于用户的事实
+    - recall                          # 回忆之前记住的事实
+  facts_file: "outputs/facts.json"    # 长期记忆落盘位置
+
 app_config:
   sample_rate: 16000
   block_size_samples: 512

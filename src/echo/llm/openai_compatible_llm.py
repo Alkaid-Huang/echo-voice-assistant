@@ -10,7 +10,7 @@ import os
 
 import requests
 
-from .llm_interface import LLMInterface
+from .llm_interface import LLMInterface, LLMResponse, ToolCall
 from .llm_factory import register_llm
 
 
@@ -50,6 +50,48 @@ class OpenAICompatibleLLM(LLMInterface):
             "max_tokens": self.max_tokens,
             "stream": False,
         }
+        data = self._post(payload)
+        try:
+            return data["choices"][0]["message"]["content"].strip()
+        except (KeyError, IndexError, TypeError) as e:
+            raise RuntimeError(f"无法解析 LLM 响应：{str(data)[:200]}") from e
+
+    def chat_with_tools(self, messages: list[dict], tools: list[dict]) -> LLMResponse:
+        """带 function calling 的调用（DeepSeek / OpenAI 兼容协议）"""
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stream": False,
+        }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        data = self._post(payload)
+        try:
+            message = data["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError) as e:
+            raise RuntimeError(f"无法解析 LLM 响应：{str(data)[:200]}") from e
+
+        calls = []
+        for item in message.get("tool_calls") or []:
+            function = item.get("function") or {}
+            calls.append(
+                ToolCall(
+                    id=item.get("id", ""),
+                    name=function.get("name", ""),
+                    arguments=function.get("arguments") or "{}",
+                )
+            )
+        return LLMResponse(
+            content=(message.get("content") or "").strip(),
+            tool_calls=calls,
+            raw=message,
+        )
+
+    def _post(self, payload: dict) -> dict:
+        """发送请求并处理常见错误（chat / chat_with_tools 共用）"""
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -76,9 +118,4 @@ class OpenAICompatibleLLM(LLMInterface):
             raise RuntimeError("触发限流（429）：请降低请求频率或检查账户配额")
         if resp.status_code >= 400:
             raise RuntimeError(f"LLM 返回错误 {resp.status_code}：{resp.text[:200]}")
-
-        data = resp.json()
-        try:
-            return data["choices"][0]["message"]["content"].strip()
-        except (KeyError, IndexError, TypeError) as e:
-            raise RuntimeError(f"无法解析 LLM 响应：{str(data)[:200]}") from e
+        return resp.json()

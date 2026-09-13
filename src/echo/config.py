@@ -4,7 +4,7 @@ Pydantic 配置模型 —— 配置驱动 + 类型校验
 VAD / ASR 部分对照 Open-LLM-VTuber（2026-08-03 / 08-13 检索）；
 LLM / TTS / 应用部分由助手扩展（2026-09-10）。
 """
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -157,6 +157,24 @@ class TTSConfig(BaseModel):
 # ═══════════════════════════════════════════════════════════
 # 应用层
 # ═══════════════════════════════════════════════════════════
+class AgentConfig(BaseModel):
+    """Agent 大脑配置：工具、记忆、人设"""
+    enabled: bool = Field(default=True)
+    max_iterations: int = Field(default=3, ge=1, le=5)
+    persona: str = Field(
+        default="你是 Echo，一个住在桌面上的 AI 伴侣；说话口语化、简短、有温度。"
+    )
+    tools: List[str] = Field(
+        default_factory=lambda: [
+            "get_current_time",
+            "get_weather",
+            "remember",
+            "recall",
+        ]
+    )
+    facts_file: str = Field(default="outputs/facts.json")
+
+
 class AppConfig(BaseModel):
     """应用层参数：音频链路 + 双工模式 + 收尾保护"""
     sample_rate: int = Field(default=16000, gt=0)
@@ -177,4 +195,5 @@ class EchoConfig(BaseModel):
     asr_config: ASRConfig = Field(default_factory=ASRConfig)
     llm_config: LLMConfig = Field(default_factory=LLMConfig)
     tts_config: TTSConfig = Field(default_factory=TTSConfig)
+    agent_config: AgentConfig = Field(default_factory=AgentConfig)
     app_config: AppConfig = Field(default_factory=AppConfig)
